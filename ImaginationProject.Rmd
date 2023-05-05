@@ -1,0 +1,739 @@
+---
+title: "Data Analysis WVS/EVS Joint Data Set - Imagination Project"
+author: "Josefina Bernardo"
+date: "2023-04-25"
+output:
+  html_document:
+    code_folding: hide
+    toc: TRUE
+---
+
+# Introduction
+
+## The Data
+
+The joint WVS/EVS data set includes data from the World Values Survey and the European Values Study. The joint data set represents the common core of both studies. It covers a wide range of values across 90 different countries, 10 of which are represented in both studies. There are a total of 231 variables which are divided across different thematic categories, such as work, family and the environment.
+
+Here, we specifically look at data from thematic category A: Perceptions of life. In this category, participants were given a list of 11 qualities and had to choose up to five which they considered desirable for a child to have. The qualities were: Good manners, independence, hard work, feeling of responsibility, imagination, tolerance and respect for other people, thrift saving money and things, determination perseverance, religious faith, unselfishness and obedience. We later look at data from category F: Religion and morale, which includes various questions on religious denomination, religious practice and beliefs. Last, we use data from category X: Demographics (Respondent), to assess the participants' income.
+
+For the second question, we use three external data sets: One on geographical data and two on the gross domestic product per country and per capita.
+
+## Research Questions
+
+We are interested in understanding the role of imagination in different cultures. Specifically, we aim to answer the following questions using the joint data set of the WVS/EVS:
+
+-   How important is imagination compared to other qualities/values across countries?
+
+-   What are the correlates of valuing imagination?
+
+# Question 1: Importance of Imagination
+
+In the first part, we aim to assess the importance of imagination relative to the other qualities mentioned in the data set (see above) across countries.
+
+## Loading and Extracting Data
+
+We start out by importing the RData File into the environment and loading all packages needed. Since the original data set does not include country names, we add them using the countrycode package. We then do some basic data exploration: Look at the data, calculate summary statistics and identify NAs. We can see there is not a lot of missing data, but some of the ranges are not what we would expect them to be. Many include negative values, which are used to code different types of missing data. We will remove these values and treat them as missing data for each category.
+
+```{r Data and Packages, echo=TRUE, warning=FALSE, results="hide"}
+# I supressed the output for this section since its is quite long
+# Read in joint EVS/WVS dataset as RData Object
+load("~/Downloads/EVS_WVS_Joint_rData_v4_0.rdata")
+
+# Load packages
+library(tidyverse)
+library(countrycode) # Assign county names
+library(ggcorrplot) # Correlation matrix
+library(rworldmap) # Create maps
+library(RColorBrewer) # Color palettes
+library(readxl) # Read Excel data sets
+library(readr) # Read CSV data
+
+# Adding countries as country names
+raw_joint_evs_wvs <- EVS_WVS_Joint_v4_0_Rworkspace %>%
+  mutate(cntry_name = countrycode(cntry, origin = "iso3n",
+                                  destination = "country.name"),
+         continent = countrycode(cntry, origin = "iso3n",
+                                  destination = "continent"))
+
+# NIR is not recognized as a country code and produces NAs
+raw_joint_evs_wvs$cntry_name <- replace_na(raw_joint_evs_wvs$cntry_name,
+                                           "Northern Ireland")
+
+raw_joint_evs_wvs$continent <- replace_na(raw_joint_evs_wvs$continent,
+                                           "Europe")
+
+# Data exploration
+names(raw_joint_evs_wvs)
+
+raw_joint_evs_wvs %>%
+  select(A001:X047E_EVS5) %>%
+  summary(.)
+
+dim(raw_joint_evs_wvs)
+str(raw_joint_evs_wvs)
+
+head(raw_joint_evs_wvs)
+
+# Looking at missing data
+raw_joint_evs_wvs %>%
+  is.na() %>%
+  colSums() # NA in X002_02A
+```
+
+## Category A: Perceptions of Life
+
+We now take a closer look at the data from category A since it contains the imagination variable we are interested in. As a reminder, participants are asked to pick up to 5 qualities which they consider to be important to be taught to children, here. Responses are binary coded: A 1 corresponds to a quality being picked and a 0 corresponds to it not being picked. We perform some basic data cleaning to assure data quality: All rows should sum up to a number between 0 and 5 and the individual values should either be 0 or 1. This step assures that we only include valid data for category A.
+
+```{r Category A Data Creation, echo=TRUE, warning=FALSE, results="hide"}
+# Extracting items of Category A to look at rankings of qualities
+catA_data <- raw_joint_evs_wvs %>%
+  select(study, wave, year, uniqid, cntry_name, continent, A027:A042) %>%
+  rename(good_manners = A027, independence = A029, hard_work = A030,
+         responsibility = A032, imagination = A034, tolerance_respect = A035,
+         thrift = A038, determination_perseverance = A039,
+         religious_faith = A040, unselfishness = A041, obedience = A042) %>%
+  mutate(rowsum = rowSums(.[,7:17]))
+
+# Check dimensions and look at data with sums outside of range
+head(catA_data)
+dim(catA_data)
+
+# Check how many rows need to be removed
+catA_data %>%
+  select(good_manners:obedience) %>%
+  mutate(rowsum = rowSums(.)) %>%
+  filter(!(rowsum %in% 0:5))
+
+# Remove row with row sums outside of range
+catA_data <- catA_data %>%
+  filter(rowsum %in% 0:5) # removes 6823 observations
+
+# Remove rows with individual observations that are not 0 or 1
+value_foo <- function(x) all(x %in% c(0,1))
+value_mask <- catA_data %>%
+  select(good_manners:obedience) %>%
+  apply(., MARGIN = 1, FUN = value_foo)
+
+
+catA_data <- catA_data[value_mask,] # removes another 741 observations
+```
+
+### Exploring Data from Category A
+
+We look at the data more closely, calculate correlations and a summary by country. This summary shows the percentage of participants from a given country who have included imagination in the most important values to teach to children.
+
+```{r Category A Data Exploration}
+# Create an overview of sample sizes per country
+catA_data %>%
+  group_by(cntry_name) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+
+# Do some data exploration on Category A
+catA_data %>%
+  select(good_manners:obedience) %>%
+  summary(.)
+
+# Create a correlation table - removed for readability
+# catA_data %>%
+  # select(good_manners:obedience) %>%
+  # cor() %>%
+  # round(digits = 2)
+
+# Visualize correlation matrix
+ggcorrplot(cor(select(catA_data, good_manners:obedience)), lab = TRUE, lab_size = 2)
+
+# Calculate average ratings per country
+catA_summary <- catA_data %>%
+  select(cntry_name, good_manners:obedience) %>%
+  group_by(cntry_name) %>%
+  summarise(good_manners = mean(good_manners, na.rm = T),
+            independence = mean(independence, na.rm = T),
+            hard_work = mean(hard_work, na.rm = T),
+            responsibility = mean(responsibility, na.rm = T),
+            imagination = mean(imagination, na.rm = T),
+            tolerance_respect = mean(tolerance_respect, na.rm = T),
+            thrift = mean(thrift, na.rm = T),
+            determination_perseverance = mean(determination_perseverance, na.rm = T),
+            religious_faith = mean(religious_faith, na.rm = T),
+            unselfishness = mean(unselfishness, na.rm = T),
+            obedience = mean(obedience, na.rm = T))
+
+# Look at overall ranges
+catA_summary %>%
+  select(good_manners:obedience) %>%
+  range()
+
+# Look at ranges of imagination
+range(catA_summary$imagination)
+
+# Check for ties to see whether we need to account for them when ranking
+catA_summary %>%
+  select(good_manners:obedience) %>%
+  rowwise() %>%
+  duplicated() %>%
+  sum() # No ties
+```
+
+The correlation table gives us an important insight: Almost all correlations are slightly negative. This makes sense given the structure of the question. If a participant picks any quality, they are automatically less likely to pick one of the other qualities because of the limit of five on number of qualities. The quality variables are, therefore, not independent from each other.
+
+Nonetheless, we can observe some patterns: Picking imagination was positively correlated with picking independence, but negatively with picking obedience and religious faith. Furthermore, picking religious faith and obedience was positively correlated. We should be cautious in interpreting these values since they are likely an underestimation of the true correlations.
+
+### Calculating Ranks for Category A
+
+We calculate a rank of each quality based on the percentages we have obtained during the last step. The percentage tells us how many people have included imagination but it does not show us how important it is compared to other values.
+
+```{r}
+# We calculate ranks per row
+ranks_matrix <- catA_summary %>%
+  select(good_manners:obedience) %>%
+  magrittr::multiply_by(-1) %>%
+  apply(1, rank) %>%
+  t()
+
+# We combine these ranks with the country names
+catA_ranks <- cbind(catA_summary[,1], ranks_matrix)
+
+# Calculate average ranks of imagination per country
+range(catA_ranks$imagination)
+mean(catA_ranks$imagination)
+median(catA_ranks$imagination)
+```
+
+## Map Visualizations of Imagination
+
+We can now use the percentages and the ranks to create maps that show us the absolute and relative importance of imagination. We first combine country names, ranks and percentages into one data frame. This allows us to look at the top and bottom countries for imagination percentage and rank (see comments). We then change some country names to make sure the package can plot them. Last, we create a map object and plot the maps.
+
+```{r}
+# Create Maps
+imagination_data <- catA_summary %>%
+  select(cntry_name, imagination) %>%
+  arrange(desc(imagination)) %>%
+  left_join(catA_ranks[,c("cntry_name", "imagination")], by = "cntry_name") %>%
+  rename(percentage = imagination.x, rank = imagination.y) %>%
+  mutate(rank = as.numeric(rank), percentage = as.numeric(percentage * 100))
+
+# Look at top and bottom countries
+imagination_data %>% # highest sorted by percentage
+  arrange(desc(percentage))
+
+imagination_data %>% # highest sorted by rank (and then percentage)
+  arrange(rank, desc(percentage))
+
+imagination_data %>% # Lowest sorted by percentage
+  arrange(percentage)
+
+imagination_data %>% # Lowest sorted by rank then percentage (identical to the previous one)
+  arrange(desc(rank), percentage)
+
+# Create Map Object - verbose argument shows some countries failed to match
+# imagination_mapdata <- joinCountryData2Map(imagination_data,
+                                           # joinCode = "NAME",
+                                           # nameJoinColumn = "cntry_name",
+                                           # verbose = T)
+
+# We replace some country names to make sure the map function picks up on them
+imagination_data <- imagination_data %>%
+  mutate(cntry_name = case_when(cntry_name == "Myanmar (Burma)" ~ "Myanmar",
+                               cntry_name == "Northern Ireland" ~ "United Kingdom",
+                               cntry_name == "Macao SAR China" ~ "Macao",
+                               cntry_name == "Bosnia & Herzegovina" ~ "Bosnia and Herzegovina",
+                               cntry_name == "North Macedonia" ~ "Macedonia",
+                               cntry_name == "Hong Kong SAR China" ~ "Hong Kong",
+                               cntry_name == "Czechia" ~ "Czech Republic",
+                               TRUE ~ cntry_name))
+
+# Check create object again
+imagination_mapdata <- joinCountryData2Map(imagination_data,
+                                           joinCode = "NAME",
+                                           nameJoinColumn = "cntry_name",
+                                           verbose = T)
+
+# Map of percentages with title
+blue_palette <- brewer.pal(7, "YlGnBu")
+
+mapCountryData(imagination_mapdata, nameColumnToPlot = "percentage",
+               mapTitle = "Percentage of people who consider
+               \nimagination important",
+               colourPalette = blue_palette, catMethod = "fixedWidth")
+
+# Map of percentages in Europe
+mapCountryData(imagination_mapdata, nameColumnToPlot = "percentage",
+               mapRegion = "eurasia",
+               mapTitle = "Percentage of people who consider
+               \nimagination important",
+               colourPalette = blue_palette, catMethod = "fixedWidth")
+
+
+# Map of ranks with title
+red_palette <- rev(brewer.pal(6, "YlOrRd"))
+
+mapCountryData(imagination_mapdata, nameColumnToPlot = "rank",
+               numCats = 6,
+               mapTitle = "Rank of imagination among qualities to teach
+               \nto children (World)",
+               colourPalette = red_palette, catMethod = "pretty")
+
+
+# Map of ranks in Europe
+mapCountryData(imagination_mapdata, nameColumnToPlot = "rank",
+               mapRegion = "eurasia", numCats = 6,
+               mapTitle = "Rank of imagination among qualities to teach
+               \nto children (Eurasia)",
+               colourPalette = red_palette, catMethod = "pretty")
+```
+
+In summary, imagination is among the values that people tend to rate as less important to teach to children. It ranks between 5th and 11th place (out of 11) with between 3.11% and 52.37% of participants for a given country including it in their most important values for a child to have.
+
+We can clearly see that imagination is valued more highly in countries of the global North. Most Scandinavian countries rate imagination more highly in comparison to the rest of Europe.
+
+Based on these analyses we can hypothesize what some other correlates of valuing imagination might be: Perhaps socio-economic status and religiousness could play a role.
+
+# Question 2: Correlates of Imagination
+
+For the second question, we want to understand which variables are correlated with valuing imagination. We first look at other variables within the data set that do not belong to category F, namely religion and income. We then use external data sets to distinguish between global North and South look at GDP.
+
+## Other variables within the joint dataset
+
+### Category F: Religion and Morale
+
+For other variables within the dataset, we are particularly interested in variables from the F Category since this includes moral and religious values. The F Category consist of the following items:
+
+-   Religious denomination
+
+-   How often do you attend religious services?
+
+-   Would you say you are a religious person?
+
+-   4 Belief items: Do you believe in... God, life after death, hell, heaven?
+
+-   How important in God in your life?
+
+-   13 Justifiability items: Indicate justifiability of... claiming government benefits to which you are not entitled, avoiding public transport fare, cheating on taxes, someone accepting a bribe, homosexuality, prostitution, abortion, divorce, euthanasia, suicide, having casual sex, political violence, death penalty.
+
+First, we perform some data cleaning and rename and recode the variables. All variables are technically categorical, but we treat the justifiability items as continuous since it has a sufficient amount of categories.
+
+```{r}
+# Selecting and renaming columns
+F_data <- raw_joint_evs_wvs %>%
+  select(uniqid, cntry_name, A034, F025,F028, F034, F050, F051, F053, F054,
+         F063, F114A, F115, F116, F117, F118, F119, F120, F121, F122, F123,
+         F132, E290, F144_02) %>%
+  rename(imagination = A034, religious_denomination = F025,
+         attendance_services = F028, religious_person = F034, bel_god = F050,
+         bel_afterlife = F051, bel_hell = F053, bel_heaven = F054,
+         importance_god = F063, jus_benefits = F114A, jus_fare = F115,
+         jus_taxes = F116, jus_bribe = F117, jus_homo = F118, jus_pros = F119,
+         jus_abort = F120, jus_divorce = F121, jus_euthanasia = F122,
+         jus_suicide = F123, jus_casual = F132, jus_pol_vio = E290,
+         jus_death_pen = F144_02)
+
+# Exclude all rows with missing data (153716 to 106814 observations)
+F_data <- F_data %>%
+  filter(imagination %in% 0:1, religious_denomination %in% 0:9,
+         attendance_services %in% c(-3,1:8), religious_person %in% 1:3,
+         bel_god %in% 0:1, bel_afterlife %in% 0:1, bel_hell %in% 0:1, bel_heaven %in% 0:1,
+         importance_god %in% 1:10, jus_benefits %in% 1:10, jus_fare %in% 1:10,
+         jus_taxes %in% 1:10, jus_bribe %in% 1:10, jus_homo %in% 1:10, jus_pros %in% 1:10,
+         jus_abort %in% 1:10, jus_divorce %in% 1:10, jus_euthanasia %in% 1:10,
+         jus_suicide %in% 1:10, jus_casual %in% 1:10, jus_pol_vio %in% 1:10,
+         jus_death_pen %in% 1:10)
+
+# We now recode the variables into factors
+bel_cols <- colnames(F_data[,7:10]) # Belief items
+jus_cols <- colnames(F_data[,11:24]) # Importance of God + Justifiability items
+
+# Recode variables
+#F_data$imagination <- factor(F_data$imagination)
+F_data$religious_denomination <- factor(F_data$religious_denomination, levels = 0:9,
+                                        labels = c("No denomination", "Roman Catholic",
+                                                   "Protestant", "Orthodox", "Jew",
+                                                   "Muslim", "Hindu", "Buddhist",
+                                                   "Other Christian", "Other"))
+F_data$attendance_services <- factor(F_data$attendance_services, levels = c(-3,1:8),
+                                     labels = c("Not applicable", "More than once a week",
+                                                "Once a week", "Once a month",
+                                                "Only on special holy days",
+                                                "Other specific holy days", "Once a year",
+                                                "Less often", "Never"))
+F_data$religious_person <- factor(F_data$religious_person, levels = 1:3,
+                                  labels = c("A religious person", "Not a religious person",
+                                             "A convinced atheist"))
+F_data[bel_cols] <- apply(F_data[,bel_cols], 2, factor)
+
+# We treat the justifiability variables as continuous since they have ten levels
+F_data[jus_cols] <- apply(F_data[,jus_cols], 2, as.numeric)
+```
+
+Now, we calculate group means per religious denomination to see whether there are any differences. Now we can perform a logistic regression with the imagination variable as an outcome variable.
+
+```{r}
+# Calculating group means
+F_data %>%
+  group_by(religious_denomination) %>%
+  summarise(perc = mean(imagination, na.rm = T))
+
+aov_F <- aov(imagination ~ religious_denomination, data = F_data)
+summary(aov_F)
+
+# Fitting a multiple ANOVA
+fit_F <- glm(imagination ~ ., data = F_data[,3:24], family = binomial())
+
+summary(fit_F)
+```
+
+The ANOVA clearly shows us that the group means of imagination differ significantly between religious denominations. We can get a more detailed understanding from the results of GLM which shows us that belonging to almost any religious denomination significantly lowers the probability of including imagination in comparison to having no religious denomination. The two exceptions are Judaism, which lowers the probability but not significantly so, and Buddhism, which actually increases the probability.
+
+The role of religiousness is further exemplified by whether someone identified as a religious person or not. Someone who said they were 'not a religious person' was significantly more likely to include imagination compared to someone who identified as a 'religious person'. This effect was even stronger for convinced atheists.
+
+The interpretations of other questions of this category appears to be more complex. There appear to be no significant group differences for how often someone attended service with respect to imagination. The belief and the justifiability items are difficult to interpret. There are some significant effects but there is no clear overall tendency with regards to whether believing in certain things or finding certain acts justifiable increased or decreased the likelihood to include imagination in their values.
+
+### Category X: Demographics - Decile of Income
+
+The data set includes two questions on perceived income. Participants were asked to place themselves in an income decile based on a list of brackets they were given (which were calculated from the average income in their country). A 1 corresponds to the lowest decile and a 10 to the highest
+
+```{r}
+# Internal variable: Perceived income decile
+# levels(as.factor(raw_joint_evs_wvs$studytit))
+
+Income_data <- raw_joint_evs_wvs %>%
+  select(uniqid, cntry_name, studytit, A034, X047_WVS7, X047E_EVS5) %>%
+  rename(imagination = A034, income_wvs7 = X047_WVS7, income_evs5 = X047E_EVS5) %>%
+  filter(((studytit == "EVS5" & income_evs5 %in% 1:10) | (studytit == "WVS7" & income_wvs7 %in% 1:10)) &
+           imagination %in% 0:1) %>%
+  mutate(income = case_when(studytit == "EVS5" ~ income_evs5, studytit == "WVS7" ~ income_wvs7)) %>%
+  select(-c(income_evs5, income_wvs7))
+
+# Again, we treat income as a continuous variable
+Income_data %>% # Bottom 10 income percentiles
+  group_by(cntry_name) %>%
+  summarize(mean_percentile = mean(income)) %>%
+  arrange(by = mean_percentile)
+
+Income_data %>% # Top 10 income percentiles
+  group_by(cntry_name) %>%
+  summarize(mean_percentile = mean(income)) %>%
+  arrange(by = desc(mean_percentile))
+
+# Test income decile as a predictor for imagination
+cor.test(Income_data$imagination, Income_data$income)
+
+# Run regression
+fit_income <- glm(imagination ~ income, data = Income_data, family = binomial())
+
+summary(fit_income)
+```
+
+We observe a very weak positive correlation between income decile and whether imagination was included. In a logistic regression, income significantly predicted whether imagination was included.
+
+## External data
+
+Now we use some external data sets to find correlates of imagination, namely:
+
+-   Data on Global North vs. Global South
+
+-   GDP per country
+
+-   GDP per capita
+
+### Data on Global North vs. Global South
+
+We use a data set which was manually extracted from Wikipedia to see whether our impression that the global North is more likely to value imagination than the Global South is correct.
+
+```{r}
+# External variable: North South
+North_South_Geo_Data <- read_excel("Downloads/North_South_Geo_Data.xlsx")
+
+North_South_Geo_Data <- North_South_Geo_Data %>%
+  mutate(Country = case_when(Country == "Bosnia and Herzegovina" ~ "Bosnia & Herzegovina",
+                             Country == "Czech Republic" ~ "Czechia",
+                             Country == "Hong Kong" ~ "Hong Kong SAR China",
+                             Country == "Iran, Islamic Republic of" ~ "Iran",
+                             Country == "Macau" ~ "Macao SAR China",
+                             Country == "Myanmar" ~ "Myanmar (Burma)",
+                             Country == "Macedonia" ~ "North Macedonia",
+                             Country == "Russian Federation" ~ "Russia",
+                             Country == "Korea, Republic of" ~ "South Korea",
+                             TRUE ~ Country))
+
+north_south_data <- catA_data %>%
+  mutate(cntry_name = case_when(cntry_name == "Northern Ireland" ~ "United Kingdom",
+                                TRUE ~ cntry_name)) %>%
+  left_join(North_South_Geo_Data, by = c("cntry_name" = "Country"))
+
+# Check for NAs
+# levels(as.factor(north_south_data[is.na(north_south_data$`Global North or Global South?`), "cntry_name"]))
+
+# ANOVA
+aov_ns <- aov(imagination ~ `Global North or Global South?`, data = north_south_data)
+summary(aov_ns)
+
+fit_ns <- glm(imagination ~ `Global North or Global South?`, data = north_south_data, family = binomial())
+summary(fit_ns)
+
+north_south_data %>%
+  group_by(`Global North or Global South?`) %>%
+  summarize(north_south_mean = mean(imagination))
+
+north_south_data %>%
+  group_by(cntry_name, `Global North or Global South?`) %>%
+  summarize(imag_mean = mean(imagination)) %>%
+  ggplot(., aes(x = `Global North or Global South?`, y = imag_mean, fill = `Global North or Global South?`)) +
+    geom_boxplot()
+```
+
+The ANOVA and fitting GLM confirms our impression that the global South is indeed less likely to value imagination over the other options.
+
+### Gross domestic product by country
+
+We import an external dataset of the GDP of each country and merge it to the data from Category A. By using the GDP, we aim to understand whether differences in socio-economic status between countries might correlate with valuing imagination. We first merge both datasets.
+
+```{r}
+# External variable: Country GDP
+
+# Load in external GDP dataset from https://www.kaggle.com/datasets/alejopaullier/-gdp-by-country-1999-2022
+GDP_by_Country <- read_csv("Downloads/GDP by Country 1999-2022.csv")
+
+# Change country names for merging
+GDP_by_Country <- GDP_by_Country %>%
+  mutate(Country = case_when(Country == "Bosnia and Herzegovina" ~ "Bosnia & Herzegovina",
+                                Country == "Czech Republic" ~ "Czechia",
+                                Country == "Hong Kong SAR" ~ "Hong Kong SAR China",
+                                Country == "Iran, Islamic Republic of" ~ "Iran",
+                                Country == "Kyrgyz Republic" ~ "Kyrgyzstan",
+                                Country == "Myanmar" ~ "Myanmar (Burma)",
+                                Country == "Macedonia, Former Yugoslav Republic of" ~ "North Macedonia",
+                                Country == "Slovak Republic" ~ "Slovakia",
+                                Country == "Korea" ~ "South Korea",
+                                Country == "Taiwan Province of China" ~ "Taiwan",
+                                TRUE ~ Country))
+
+# Transform from wide to long format
+GDP_by_Country$Country <- factor(GDP_by_Country$Country)
+GDP_by_Country <- gather(GDP_by_Country, "Year", "GDP", 2:24)
+
+
+# Append GDPs to Category A dataset (we have already selected valid data from Category A above)
+# levels(as.factor(catA_data$year))
+# levels(as.factor(GDP_by_Country$Year))
+GDP_by_Country$Year <- as.integer(GDP_by_Country$Year)
+
+gdp_data <- catA_data %>%
+  mutate(cntry_name = case_when(cntry_name == "Northern Ireland" ~ "United Kingdom",
+                             TRUE ~ cntry_name)) %>%
+  left_join(GDP_by_Country, by = c("year" = "Year", "cntry_name" = "Country"))
+
+# levels(as.factor(gdp_data[is.na(gdp_data$GDP), "cntry_name"]))
+```
+
+With the merged data set, we can now calculate correlations, run a regression and plot the imagination mean (= percentage of people who have included imagination in their values) against the GDP.
+
+```{r}
+# Calculate correlation
+gdp_data %>%
+  group_by(cntry_name, year, GDP) %>%
+  summarise(imag_mean = mean(imagination)) %>%
+  arrange(by = desc(imag_mean))
+
+cor.test(gdp_data$imagination, gdp_data$GDP)
+
+# Run regression
+fit_GDP <- glm(imagination ~ GDP, data = gdp_data, family = binomial())
+
+summary(fit_GDP)
+
+# Join North South Data
+gdp_data <- cbind(gdp_data, north_south_data$`Global North or Global South?`)
+colnames(gdp_data)[20] <- "north_south_var"
+
+# Visualize these results
+gdp_data %>%
+  group_by(cntry_name, year, GDP) %>%
+  summarise(imag_mean = mean(imagination)) %>%
+  ggplot(., aes(x = GDP, y = imag_mean)) +
+    geom_point() +
+    geom_label(data = . %>% filter(GDP > 5000),
+               aes(label = cntry_name))
+```
+
+We observe substantial outliers which seem to bias the correlation - the GDPs of China and the US are more than three standard deviations from the mean GDP. Therefore, we exclude GDPs which are above 3 standard deviations from the mean GDP, compute a new correlations coefficient and re-run the regression. We visualize overall results the same as before and split plots by continent to get an impression of differences between continents.
+
+```{r}
+# Remove outliers and NAs
+gdp_summary <- gdp_data %>%
+  group_by(cntry_name, year, GDP, continent, north_south_var) %>%
+  summarise(imag_mean = mean(imagination)) %>%
+  arrange(by = desc(GDP))
+
+gdp_summary <- gdp_summary %>%
+  filter(GDP < mean(gdp_summary$GDP, na.rm = T) + 3*sd(gdp_summary$GDP, na.rm = T) &
+           GDP > mean(gdp_summary$GDP, na.rm = T) - 3*sd(gdp_summary$GDP, na.rm = T))
+
+ggplot(gdp_summary, aes(x = GDP, y = imag_mean)) +
+  geom_point()
+
+# Re-run correlation test and regression without outliers
+gdp_data_2 = gdp_data %>%
+  filter(cntry_name %in% gdp_summary$cntry_name) %>%
+  select(imagination, GDP)
+
+cor.test(gdp_data_2$imagination, gdp_data_2$GDP)
+
+fit_GDP_2 <- glm(imagination ~ GDP, data = gdp_data_2, family = binomial())
+
+summary(fit_GDP_2)
+
+# Creating a final visualization
+ggplot(gdp_summary, aes(x = GDP, y = imag_mean, color = continent)) +
+  geom_point()
+
+ggplot(gdp_summary, aes(x = GDP, y = imag_mean, color = continent)) +
+  geom_point() +
+  facet_wrap(~ continent)
+
+ggplot(gdp_summary, aes(x = GDP, y = imag_mean, color = north_south_var)) +
+  geom_point()
+
+ggplot(gdp_summary, aes(x = GDP, y = imag_mean, color = north_south_var)) +
+  geom_point() +
+  facet_wrap(~ north_south_var)
+
+# Calculate correlations separately
+gdp_data %>%
+  group_by(north_south_var) %>%
+  summarize(correlation = cor(imagination, GDP, use = "complete.obs"),
+            n = n())
+```
+
+The overall correlation increases by removing outliers and GDP remains a significant predictor of imagination. The plots show us substantial differences with respect to geographical regions. Not only are there regional differences with respect to means for GDP and imagination, we also see that data is more spread out for some continents.
+
+### Gross domestic product per capita
+
+Since we had two outliers when using the GDP for the entire country, we now use GDP per capita. Again, we want to assess socio-economic status, but we want to correct for population size, since we suspect this might remove the outliers.
+
+```{r}
+# GDP per capita
+# Load in another GDP dataset from https://www.imf.org/external/datamapper/NGDPDPC@WEO/OEMDC/ADVEC/WEOWORLD
+GDP_per_Capita <- read_excel("Downloads/imf-dm-export-20230503.xls")
+
+# Some cleaning
+GDP_per_Capita <- drop_na(GDP_per_Capita)
+GDP_per_Capita[GDP_per_Capita == "no data"] <- NA
+colnames(GDP_per_Capita)[1] <- "Country"
+
+# Change country names for merging
+GDP_per_Capita <- GDP_per_Capita %>%
+  mutate(Country = case_when(Country == "Bosnia and Herzegovina" ~ "Bosnia & Herzegovina",
+                             Country == "China, People's Republic of" ~ "China",
+                             Country == "Czech Republic" ~ "Czechia",
+                             Country == "Hong Kong SAR" ~ "Hong Kong SAR China",
+                             Country == "Kyrgyz Republic" ~ "Kyrgyzstan",
+                             Country == "Macao SAR" ~ "Macao SAR China",
+                             Country == "Myanmar" ~ "Myanmar (Burma)",
+                             Country == "Russian Federation" ~ "Russia",
+                             Country == "Slovak Republic" ~ "Slovakia",
+                             Country == "Korea, Republic of" ~ "South Korea",
+                             Country == "Taiwan Province of China" ~ "Taiwan",
+                             Country == "Türkiye, Republic of" ~ "Turkey",
+                             TRUE ~ Country))
+
+# Transform from wide to long format
+GDP_per_Capita$Country <- factor(GDP_per_Capita$Country)
+GDP_per_Capita <- gather(GDP_per_Capita, "Year", "GDP", 2:50)
+
+
+# Append GDPs to Category A dataset (we have already selected valid data from Category A above)
+# levels(as.factor(catA_data$year))
+# levels(as.factor(GDP_per_Capita$Year))
+GDP_per_Capita$Year <- as.integer(GDP_per_Capita$Year)
+GDP_per_Capita$GDP <- as.numeric(GDP_per_Capita$GDP)
+
+gdp_pc_data <- catA_data %>%
+  mutate(cntry_name = case_when(cntry_name == "Northern Ireland" ~ "United Kingdom",
+                                TRUE ~ cntry_name)) %>%
+  left_join(GDP_per_Capita, by = c("year" = "Year", "cntry_name" = "Country"))
+
+# levels(as.factor(gdp_pc_data[is.na(gdp_pc_data$GDP), "cntry_name"]))
+
+# Calculate correlation
+gdp_pc_data %>%
+  group_by(cntry_name, year, GDP) %>%
+  summarise(imag_mean = mean(imagination)) %>%
+  arrange(by = desc(imag_mean))
+
+cor.test(gdp_pc_data$imagination, gdp_pc_data$GDP)
+
+# Run regression
+fit_GDP_pc <- glm(imagination ~ GDP, data = gdp_pc_data, family = binomial())
+
+summary(fit_GDP_pc)
+
+# Join North South Data
+gdp_pc_data <- cbind(gdp_pc_data, north_south_data$`Global North or Global South?`)
+colnames(gdp_pc_data)[20] <- "north_south_var"
+
+# Visualize these results
+gdp_pc_data %>%
+  group_by(cntry_name, year, GDP) %>%
+  summarise(imag_mean = mean(imagination)) %>%
+  ggplot(., aes(x = GDP, y = imag_mean)) +
+  geom_point()
+
+# Calculate summary
+gdp_pc_summary <- gdp_pc_data %>%
+  group_by(cntry_name, year, GDP, continent, north_south_var) %>%
+  summarise(imag_mean = mean(imagination)) %>%
+  arrange(by = desc(GDP))
+
+# We can see that there are no outliers (although some tax havens are over 2SD above average)
+gdp_pc_summary %>%
+  filter(!(GDP < mean(gdp_pc_summary$GDP, na.rm = T) + 2*sd(gdp_pc_summary$GDP, na.rm = T) &
+           GDP > mean(gdp_pc_summary$GDP, na.rm = T) - 2*sd(gdp_pc_summary$GDP, na.rm = T)))
+
+# Creating a final visualization
+ggplot(gdp_pc_summary, aes(x = GDP, y = imag_mean, color = continent)) +
+  geom_point()
+
+ggplot(gdp_pc_summary, aes(x = GDP, y = imag_mean, color = north_south_var)) +
+  geom_point()
+
+ggplot(gdp_pc_summary, aes(x = GDP, y = imag_mean, color = continent)) +
+  geom_point() +
+  facet_wrap(~ continent)
+```
+
+We found slightly higher correlations and no outliers when using GDP per capita. GDP remains a significant predictor of imagination, which indicates that socio-economic status of a country is a (weak) correlate of valuing imagination.
+
+# Summary
+
+In this analysis, we aimed to answer the following questions:
+
+-   How important is imagination compared to other qualities/values across countries?
+
+-   What are the correlates of valuing imagination?
+
+using the EVS/WVS joint data set. We specifically looked at the items on child qualities, where participants were asked to choose up to five out of eleven qualities they deemed important for a child to have.
+
+For the first question, we found that imagination was among the qualities considered less important for a child to have. Only a total of 20.60% of participants included imagination in their list, which ranks it last out of all eleven qualities that were included. For reference, the most popular quality 'good manners' was included by 75.03% of participants.
+
+We found imagination to be negatively correlated with choosing most other qualities due to the nature of the question. Most noteworthy, we found a very weak positive correlation with choosing independence (r = 0.08) and two very weak negative correlations with obedience and good manners (r = -0.12).
+
+Overall, imagination was included by between 3.11% and 52.37% of participants for a given country. We also assessed the relative importance of imagination by calculating how imagination ranked among all qualities. We found substantial differences, with imagination being considered the 5th to 11th most important quality between countries.
+
+We created map visualizations for these results, which offered the following insights: Countries of the global North appeared to rate imagination more highly than countries of the global South. The country where most people included imagination in their Top 5 qualities was South Korea with 52.4%. Notably, most (culturally) Scandinavian countries also rated very highly (30.53% - 43.80%).
+
+On the other hand, the countries that included imagination the least were mostly countries of the Global South, with Egypt ranking the lowest. Only 3.11% of the Egyptian sample included imagination in their quality list.
+
+Based on these observations, we hypothesized some possible correlates of valuing imagination. First, we tested some of the other variables as predictors for imagination. We focused on religion and morale. In an ANOVA, we found that belonging to most religious denominations predicted being less likely to value imagination. The only exception was Buddhism, which significantly predicted being more likely to include imagination. Identifying as a religious person also made one significantly less likely to value imagination compared to non-religious people and atheists. With respect to beliefs and ratings of justifiability, there was no clear trend of whether they increased or decreased the likelihood of valuing imagination and whether this relationship was significant.
+
+We then tested self-reported income decile (compared to average income of a country) as a predictor of imagination. Income decile significantly predicted imagination, with higher levels of income being associated with being more likely to value imagination.
+
+Second, we tested external data as predictors of imagination. We used a dataset on geographical location to see whether countries of the Global North were indeed more likely to value imagination. We found individuals from countries of the global North to score significantly higher compared to those from countries of the Global South.
+
+We then looked at GDP by country as a predictor. In a logistic regression, GDP significantly predicted whether imagination was included or not. Participants from a country with a higher GDP were more likely to include imagination in the qualities they considered most important for children.
+
+We also checked GDP per capita to correct for population size. Correlations were slightly higher, although still very weak (r = 0.14) and GDP per capita also significantly predicted imagination.
+
+## Limitations
+
+The data does not allow to assess the absolute importance of imagination. As we already described when looking at correlations, any quality will correlate negatively with the other ones because participants are not asked which qualities they consider important but are limited to the five which they consider most important. This prevents us from drawing conclusions such as 'People from country A think imagination is not very important' because we can only say so relative to other traits. This also offers an explanation to why GDP and income decile predict imagination - perhaps economic insecurity relates to people valuing other qualities in children over imagination.
